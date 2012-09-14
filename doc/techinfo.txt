@@ -1,0 +1,424 @@
+
+                         Dpmaster, an open master server
+                         -------------------------------
+
+                              Technical information
+                              ---------------------
+
+
+1) COMPILING DPMASTER
+2) USING DPMASTER WITH YOUR GAME
+3) PROTOCOL
+4) BEHAVIOUR
+5) THE TEST SUITE
+
+
+1) COMPILING DPMASTER:
+
+Dpmaster is known to compile successfully on GCC, MinGW (GCC for Windows), and
+Microsoft Visual Studio 8. You can also cross-compile it to Windows using MinGW.
+
+Here are the commands you will have to run, depending on your system.
+
+    1) Building on a UNIX system (Linux, BSDs, and Mac OS X):
+
+        - For building release binaries:
+
+            make release
+
+        - For building debug binaries:
+
+            make debug
+
+        - For cleaning the files produced by a build:
+
+            make clean
+
+
+    2) Building on Windows using MinGW:
+
+        - For building release binaries:
+            
+            mingw32-make mingw-release
+
+        - For building debug binaries:
+            
+            mingw32-make mingw-debug
+
+        - For cleaning the files produced by a build:
+            
+            mingw32-make win-clean
+
+
+    3) Cross-compiling from UNIX to Windows using MinGW:
+
+        Here, you have to specify the compiler name by hand. In these examples,
+        my MinGW compiler is "i586-mingw32msvc-gcc".
+
+        - For building release binaries:
+            
+            make mingw-release CC=i586-mingw32msvc-gcc
+
+        - For building debug binaries:
+            
+            make mingw-debug CC=i586-mingw32msvc-gcc
+
+        - For cleaning the files produced by a build:
+            
+            make clean
+
+
+    4) Building on Windows using Microsoft Visual Studio:
+
+        No command line here. Open the project by double-clicking on
+        "dpmaster.sln". Choose the configuration you want, either "Debug" or
+        "Release". Then go to the "Build" menu and click on "Build solution".
+
+        You'll find the executable file in a newly created subdirectory, called
+        "Debug" or "Release", depending on the configuration you chose.
+
+
+2) USING DPMASTER WITH YOUR GAME:
+
+This section is a summary of what you have to do in your game code in order to
+use a running instance of dpmaster as a master server for your game. A more
+complete description of the protocol can be found in the next section.
+
+Let's say we have nearly finished coding a brand new real-time strategy game
+"BattleArt 3". The network code is working, but players have to manually enter
+IP addresses to play with their friends on the internet. Obviously, it needs a
+master server to keep track of the game sessions.
+
+On the server side (the side of the player who has created the session and is
+waiting for other players), you have to declare the game session. To do that,
+the server must send an "heartbeat" message to the master, which will reply by
+sending back a "getinfo" message containing a password (a "challenge"). The
+server will then send the master an "infoResponse" message, containing this
+password plus a few pieces of information about its session: the maximum number
+of players it can accept, the number of players currently in the game, the
+number of the network protocol it uses, and of course the game name.
+
+So, an infoResponse for "BattleArt 3" could be, in a C-like syntax:
+
+    "\xFF\xFF\xFF\xFFinfoResponse\x0A\\gamename\\BattleArt3\\clients\\1"
+    "\\sv_maxclients\\4\\protocol\\5\\challenge\\the password"
+
+As you can see, this message declares a session for the game "BattleArt3" (no
+spaces are allowed in the game name, so I concatenated the name and the number).
+This session already has 1 player waiting, and can have 4 players at most. The
+network protocol it uses is version 5, so the clients who will join must be able
+to handle this protocol version correctly.
+
+Note that we could also have specified a name or number for a "gametype" (i.e. a
+game mode, like "Battle to Death" or "Resource Harvesting"). But for this simple
+example, let's say our RTS has only one game mode.
+
+This 3-step procedure "heartbeat" -> "getinfo" -> "infoResponse" should be
+repeated each time one of the values in the infoResponse message changes. In
+this example, it means when a player joins or leaves the session, as the other
+values shouldn't change once a particular session has been declared.
+
+We are now done with the server side, let's see the client side.
+
+It's easier here: the client simply sends to the master a "getserversExt"
+message containing the game name and the protocol number it uses, and optionally
+some filtering options. So for "BattleArt 3", we would have something like:
+
+    "\xFF\xFF\xFF\xFFgetserversExt BattleArt3 5"
+
+By default, dpmaster doesn't send empty or full servers. We are not interested
+by full servers anyway, and an empty server would actually mean that the session
+no longer exists. Since we have no "gametype" to specify either, there is no
+filtering options to append to this message.
+
+The master will reply by sending the client the IP addresses of all the servers
+matching these criteria (see the syntax of the "getserversExtResponse" message
+in the "PROTOCOL" section). The last thing the client has to do now is to
+contact the various servers individually, so it can retrieve the additional
+information the player may need in order to make its choice (like the map name,
+for instance).
+
+
+3) PROTOCOL:
+
+Dpmaster uses a protocol that is heavily inspired by Quake III Arena's master
+server protocol. The reference document for this protocol can be found on id
+Software anonymous FTP site:
+
+    ftp://ftp.idsoftware.com/idstuff/quake3/docs/server.txt
+
+I have tried to keep the protocol as close as possible to Q3A's one, for a
+matter of compatibility with the numerous tools that exist for this game.
+
+Dpmaster uses 5 types of messages, plus 2 extra types for supporting IPv6, the
+successor of the current internet protocol IPv4. The 5 basic types are:
+"heartbeat", "getinfo", "infoResponse", "getservers" and "getserversResponse".
+The 2 extra types are "getserversExt" and "getserversExtResponse", 2 extended
+versions of the basic types "getservers" and "getserversResponse" respectively.
+The first 3 basic types are used by servers to authenticate and register
+themselves to a master server. The remaining types are used by clients to
+retrieve a list of servers from a master server. All messages start with 4 bytes
+set to 0xFF (character 255), then the command type in plain text.
+
+The 2 basic types of messages which are likely to cause compliance problems with
+Q3A-compatible tools are: "heartbeat" (requires a different protocol string) and
+"getservers" (requires a game name before the protocol number, and may contain
+unknown filtering options). Also, note that the "infoResponse" messages may be
+considered invalid by programs which require precisely the key names used by Q3A
+in the infostring.
+
+    1) heartbeat:
+
+        - description:
+
+            The heartbeat is sent by a server when it wants to get noticed by a
+            master. A server should send an heartbeat each time it becomes empty
+            or full, or stop being empty or full, plus it should make sure the 
+            master gets at least one heartbeat from it every 10 or 15 minutes,
+            so the master doesn't remove it from its list of active servers.
+
+        - samples:
+
+            "\xFF\xFF\xFF\xFFheartbeat DarkPlaces\x0A"       (DP protocol)
+            "\xFF\xFF\xFF\xFFheartbeat QuakeArena-1\x0A"     (Q3A)
+            "\xFF\xFF\xFF\xFFheartbeat Wolfenstein-1\x0A"    (RtCW)
+            "\xFF\xFF\xFF\xFFheartbeat EnemyTerritory-1\x0A" (WoET)
+
+        - syntax:
+
+            A protocol string is required after the type name, and a line feed
+            (character 10, '\n') closes the message. Note that the string after
+            the type name is a PROTOCOL STRING, not a game string! Please make
+            sure you use "DarkPlaces" as your protocol string if you use
+            dpmaster for your own game, or it won't work!
+
+    2) getinfo:
+
+        - description:
+
+            This message is sent by a master to a server, usually in response
+            to an "hearbeat" by this very server. It is used by the master to
+            trigger the sending of an "infoResponse" from the server. The
+            challenge string is necessary to authenticate the server's
+            corresponding "infoResponse".
+
+        - sample:
+
+            "\xFF\xFF\xFF\xFFgetinfo A_ch4Lleng3"
+
+        - syntax:
+
+            The message type is followed by a challenge string. All printable
+            characters but 5 are allowed in this string (from ASCII code 33 to
+            126). The 5 exceptions are characters '\', '/', ';', '"' and '%'.
+
+    3) infoResponse:
+
+        - description:
+
+             An "infoResponse" message is the reponse to a "getinfo" request.
+             It contains an infostring including the most important information
+             about the current server state.
+
+        - sample:
+
+            "\xFF\xFF\xFF\xFFinfoResponse\x0A\\sv_maxclients\\8\\clients\\0\\.."
+
+        - syntax:
+
+            The message type is followed by a line feed character and the
+            server's infostring. An infostring is a series of keys and values
+            separated by '\'s. Popular keys include "hostname" (the host name),
+            and "mapname" (the map currently played on this server).
+            This infostring must contain the challenge string sent by the
+            master in the "getinfo" that triggered this response (key name:
+            "challenge"). "sv_maxclients" (the maximum number of clients
+            allowed on the server; must not be 0), "protocol" (the protocol
+            number) and "clients" (the current number of clients on the
+            server) must also be present. Except for anonymous games like Q3A,
+            "gamename" (the game name) is mandatory too, and its value must not
+            contain whitespaces.
+            
+            Starting from version 2.0, dpmaster also uses the value of the
+            "gametype" key, which may be specified as a filter in server list
+            queries (see the "getservers" message description below for more
+            details). If no "gametype" key is present in the response message,
+            this value defaults to "0". In version 2.0, a gametype value had to
+            be a number, but starting from version 2.1 it can be any string, as
+            long as it does not contain whitespace characters.
+
+    4) getservers:
+
+        - description:
+
+             A "getservers" message is sent to a master by a client who wants
+             to get a list of servers. It triggers a "getserversReponse"
+             message from the master.
+
+        - samples:
+
+            "\xFF\xFF\xFF\xFFgetservers 67 ffa empty full" (Q3A)
+            "\xFF\xFF\xFF\xFFgetservers 84"                (WoET)
+            "\xFF\xFF\xFF\xFFgetservers Nexuiz 3"          (DP running Nexuiz)
+            "\xFF\xFF\xFF\xFFgetservers qfusion 39 full"   (QFusion)
+
+        - syntax:
+
+            The message must contain a protocol number, and optionally "empty"
+            and/or "full" depending on whether or not the client also wants to
+            get empty or full servers (except for WoET, which always expect a
+            list of all servers). A client using the DP protocol also has to
+            specify its game name, right before the protocol number. Anonymous
+            games such as Q3A or RtCW don't, obviously. Game names must not
+            contain whitespace characters.
+
+            Starting from dpmaster version 2.0, you may also add in the option
+            list at most one gametype filter "gametype=X", where X is the
+            gametype string a server must have declared to be part of the
+            returned server list. 4 other keywords are allowed as shortcuts to
+            this filter, for compatibility with Q3A: "ffa", "tourney", "team"
+            and "ctf" are equivalent to "gametype=0", "gametype=1", "gametype=3"
+            and "gametype=4" respectively.
+
+    5) getserversResponse:
+
+        - description:
+
+            A "getserversResponse" message contains a list of IPv4 servers
+            requested by a client.
+
+        - sample:
+
+            "\xFF\xFF\xFF\xFFgetserversResponse\\[...]\\EOT\0\0\0"
+
+        - syntax:
+
+            The list of servers is composed of IPv4 addresses and ports. Each
+            server is stored on 4 bytes for the IP address and 2 bytes for the
+            port number, and a '\' to separate it from the next server. All
+            numbers are big-endian oriented (most significant bytes first). For
+            instance, a server hosted at address 1.2.3.4 on port 2048 will be
+            sent as: "\x01\x02\x03\x04\x08\x00".
+            
+            If the list is too big to fit into one single network packet,
+            dpmaster will create as many getserversResponses as necessary to 
+            send all the matching servers. The last message contains a fake
+            server at the end of the list, which is the 6-byte string
+            "EOT\0\0\0", to tell the client that the master has finished to send
+            the server list (EOT stands for "End Of Transmission").
+
+            Prior to version 2.0, dpmaster ended all its getserversResponse
+            messages with an EOT mark, even when multiple messages were required
+            for a single response. Dpmaster 2.0 fixed this, allowing for smarter
+            handling of the reponse messages on the client side.
+
+    6) getserversExt:
+
+        - description:
+
+            A "getserversExt" message is sent to a master by a client who wants
+            to get a list of servers. It triggers a "getserversExtReponse"
+            message from the master.
+
+        - sample:
+
+            "\xFF\xFF\xFF\xFFgetserversExt Quake3Arena 68 ipv4 empty ipv6"
+
+        - syntax:
+
+            The message must contain the game name, a protocol version, and
+            optionally a list of whitespace-separated filtering options. All
+            those defined for the "getservers" message ("empty", "full,
+            "gametype=X" and its shortcuts) are currently supported, plus 2
+            other ones: "ipv4" and "ipv6" to ask specifically for servers using
+            this/these protocol(s). If no protocol name appears in the list, the
+            master server won't filter the servers by protocol, behaving in
+            practice as if all protocols appeared in the list.
+
+            As you can see in this sample, since the game name is mandatory in
+            an extended query, you'll have to use the game name "Quake3Arena"
+            explicitly if you want to ask for Q3A servers. Likewise, you'll have
+            to specify "wolfmp" for RtCW servers, and "et" for WoET servers. As
+            usual, game names must not contain whitespace characters.
+
+    7) getserversExtResponse:
+
+        - description:
+
+            A "getserversExtResponse" message contains a list of IPv4 and/or
+            IPv6 servers requested by a client.
+
+        - sample:
+
+            "\xFF\xFF\xFF\xFFgetserversExtResponse/[...]\\[...]\\EOT\0\0\0"
+
+        - syntax:
+
+            The list of servers is composed of IPv4 and IPv6 addresses and their
+            associated ports. Each server is stored on 4 bytes for an IPv4
+            address, 16 bytes for an IPv6 address, plus 2 bytes for the port
+            number. To differentiate and separate those addresses, a '\'
+            character precedes every IPv4 address, and a '/' character precedes
+            every IPv6 address. All numbers are big-endian oriented (most
+            significant bytes first). For instance, an IPv4 server hosted at
+            address 1.2.3.4 on port 2048 will be sent as:
+            "\x01\x02\x03\x04\x08\x00".
+            
+            If the list is too big to fit into one single network packet,
+            dpmaster will create as many getserversResponses as necessary to 
+            send all the matching servers. The last message contains a fake IPv4
+            address at the end of the list, which is the 6-byte string
+            "EOT\0\0\0", to tell the client that the master has finished to send
+            the server list (EOT stands for "End Of Transmission").
+
+
+4) BEHAVIOUR:
+
+The way dpmaster behaves when talking to clients and servers is largely based
+on one important idea: authenticated "infoResponse" messages are the only
+messages we can reasonably trust.
+
+When dpmaster receives an "heartbeat" message from a server, it will reply with
+a "getinfo" and register this server for a couple of seconds. If it hasn't sent
+back an "infoResponse" containing a valid challenge string by this time,
+dpmaster forgets it. Further "heartbeat" messages can't prolong this time,
+and the server IP address won't be transmitted to any client during that period
+of time.
+
+When dpmaster receives a valid "infoResponse" from a server, it associates a new
+timeout value to it (15 min). Only another valid "infoResponse" from this very
+server will be able to refresh this timeout value. Its IP address will be
+transmitted to the appropriate clients, until it timeouts. Then, dpmaster
+forgets it.
+
+You may have noticed that this behaviour doesn't take into account the fact
+that some servers send 2 "heartbeat" messages when closing. I deliberately
+choose to keep the behaviour as simple and predictable as possible, hopefully
+making it free from any major abuse.
+
+
+5) THE TEST SUITE:
+
+The collection of Perl scripts that you can find in the "testsuite" directory,
+next to the source subdirectory, is used to do some basic tests on dpmaster,
+mostly to avoid regressions. All those simple scripts use a more complicated,
+common Perl module: "testlib.pm". This module can create fake game clients and
+servers, and make them exchange network messages with a running instance of
+dpmaster.
+
+This suite is an imperfect solution to a complicated problem: how to test a
+master server with a single computer, without starting by hand several servers
+and clients of various games. It's still a work in progress, but it has already
+proven extremely useful in guaranteeing a minimum stability and quality when
+modifying dpmaster's source code.
+
+The syntax of the test scripts themselves is pretty simple, so despite the fact
+that this suite isn't yet documented, you should be able to write your own tests
+easily if you need to.
+
+The test suite requires the Socket6 perl module to run.
+
+
+--
+Mathieu Olivier
+molivier, at users.sourceforge.net

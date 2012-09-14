@@ -1,0 +1,385 @@
+
+                         Dpmaster, an open master server
+                         -------------------------------
+
+                                  User's manual
+                                  -------------
+
+
+1) ABOUT THIS FILE
+2) SECURITY
+3) OUTPUT AND VERBOSITY LEVELS
+4) LOGGING
+5) GAME POLICY
+6) GAME PROPERTIES
+7) FLOOD PROTECTION
+8) ADDRESS MAPPING
+9) LISTENING INTERFACES
+
+
+1) ABOUT THIS FILE:
+
+This file contains detailed information about how to configure and run dpmaster.
+If you haven't already read the "readme.txt" file (in the parent directory), you
+should do so before proceeding.
+
+
+2) SECURITY:
+
+First, you shouldn't be afraid to run dpmaster on your machine: at the time I
+wrote those lines, only one security warning has been issued since the first
+release of dpmaster. It has always been developed with security in mind and will
+always be.
+
+Also, dpmaster needs very few things to run in its default configuration. A
+little bit of memory, a few CPU cycles from time to time and a network port are
+its only basic requirements. So feel free to restrict its privileges as much as
+you can.
+
+The UNIX/Linux version of dpmaster has even a built-in security mechanism that
+triggers when it is run with super-user (root) privileges. Basically, the
+process locks (chroots) itself in the directory "/var/empty/" and drops its
+privileges in favor of those of user "nobody". This path and this user name are
+of course customizable, thanks to the '-j' and '-u' command line options.
+
+If you are running dpmaster on a Windows system, you may want to add a
+"dpmaster" user on your computer. Make it a normal user, not a power user or an
+administrator. You'll then be able to run dpmaster using this low-privilege
+account. Right click on "dpmaster.exe" while pressing the SHIFT button; select
+"Run as...", and type "dpmaster", the password you chose for it, and your
+domain main (your computer name probably). The same result can also be achieved
+by using Windows' "runas" command.
+
+
+3) OUTPUT AND VERBOSITY LEVELS:
+
+The "-v" / "--verbose" option allows you to control the amount of text dpmaster
+outputs. Setting its verbosity to a particular level make dpmaster output all
+texts belonging to that level or below. If you don't specify a verbose level
+right after the "-v" command line option, the highest level will be used. 
+
+There are 5 verbose levels:
+   * 0: No output, except if the parsing of the command line fails.
+   * 1: Fatal errors only. It is almost similar to level 0 since fatal errors
+        mostly occur during the parsing of the command line in this version.
+   * 2: Warnings, including non-fatal system errors, malformed network messages,
+        unexpected events (when the maximum number of servers is reached for
+        instance), and the server list printed on top of log files.
+   * 3: The default level. Standard printings, describing the current activity.
+   * 4: All information (a lot!), mostly helpful when trying to debug a problem.
+
+Looking for errors in a level 4 log can be a tedious task. To make your job
+easier, all error messages in dpmaster start with the word "ERROR" in capital
+letters, and all warning messages start with the word "WARNING", again in
+capital letters.
+
+
+4) LOGGING:
+
+You can enable logging by adding "-L" or "--log" to the command line. The
+default name of the log file is "dpmaster.log", either in the working directory
+for Windows systems, or in the "/var/log" directory for UNIX systems. You can
+change the path and name of this file using the "--log-file" option. Obviously,
+the program must have write permission in the directory the log file is supposed
+to be written.
+
+The obvious way to use the log is to enable it by default. But if you intend to
+do that, you may want to consider using a lesser verbose level ("-v" or
+"--verbose", with a value of 1 - only errors, or 2 - only errors and warnings),
+as dpmaster tends to be very verbose at its default level (3) or higher.
+
+Another way to use the log is to set the verbose level to a normal or high
+value, but to enable it only when needed, and then to disable it afterwards. It
+is possible on systems that provide POSIX signals USR1 and USR2 (all supported
+systems except the Windows family). When dpmaster receives the USR1 signal, it
+opens its log file, or reopens it if it was already opened, dumps the list of
+all registered servers, and then proceeds with its normal logging. When it
+receives the USR2 signal, it closes its log file.
+
+Note that dpmaster will never overwrite an existing log file, it always appends
+logs to it. It prevents you from losing a potentially important log by mistake,
+with the drawback of having to clean the logs manually from time to time.
+
+There are a couple of pitfalls you should be aware of when using a log file:
+first, if you run dpmaster as a daemon, remember that its working directory is
+the root directory, so be careful with relative paths. And second, if you put
+your dpmaster into a chroot jail, and start or restart the log after the
+initialization phase, its path will then be rooted and relative to the jail root
+directory.
+
+
+5) GAME POLICY:
+
+If you run an instance of dpmaster, I strongly encourage you to let it open to
+any game. Dpmaster has been developed for this particular usage and is
+well-suited for it.
+
+That said, if you want to restrict which games are allowed on your master, you
+can use the "--game-policy" option. It makes dpmaster explicitly accept or
+reject network messages based on the game they are related to. For example:
+
+        dpmaster --game-policy accept Quake3Arena Transfusion
+
+will force dpmaster to accept servers, and answer to requests, only when they're
+related to either Q3A or Transfusion. At the opposite:
+
+        dpmaster --game-policy reject AnnoyingGame
+
+will accept any game messages except those related to AnnoyingGame.
+
+You can have multiple "--game-policy" lists on the same command line, but they
+must all use the same policy (either "accept" or "reject").
+
+As you can see in the first example, "Quake3Arena" is the name you'll have to
+use for Q3A. The other game names only depend on what code names their
+respective engines choose to advertise their servers and to make their client
+requests.
+
+Two final warnings regarding this option. First, be careful, the names are case-
+sensitive. And second, this option expects at least 2 parameters (accept/reject,
+and at least one game name), so this:
+
+        dpmaster --game-policy accept -v -n 200
+
+will make dpmaster accept messages only when they will be related to a game
+called "-v" (certainly not what you want here...).
+
+
+6) GAME PROPERTIES:
+
+Dpmaster supports 2 kinds of games: open-source games which use the DarkPlaces
+master protocol, and a few formerly closed-source games which use the Quake 3
+master protocol or a variant of it. The DarkPlaces master protocol itself is a
+variant of the Quake 3 master protocol, the main difference being that games
+send their name in addition to the usual informations or queries. That's what
+makes dpmaster able to support multiple games easily.
+
+Unfortunately, formerly closed-source games don't always send this information,
+or another information that allows dpmaster to guess the game name safely.
+That's why they are called "anonymous games" here. Up to version 2.1 included,
+the only anonymous game dpmaster supported was Q3A, so it was easy: if the game
+didn't send its name, it was Q3A. But now dpmaster also supports 2 other
+anonymous games: RtCW and WoET. That's why a new mechanism had to be created to
+allow dpmaster to figure out which game sends it which message. This mechanism
+is called "game properties".
+
+Game properties are controlled by the command line option "--game-properties"
+(short option: "-g"). A number of properties are built into dpmaster, so you
+shouldn't have to configure anything for a standard usage. You can make it print
+its current list of game properties by using the command line option without any
+parameter. Here's the output you currently get:
+
+        Game properties:
+        * et:
+           - protocols: 72, 80, 83, 84
+           - options: send-empty-servers, send-full-servers
+           - heartbeats: EnemyTerritory-1 (alive), ETFlatline-1 (dead)
+
+        * wolfmp:
+           - protocols: 50, 59, 60
+           - options: none
+           - heartbeats: Wolfenstein-1 (alive), WolfFlatline-1 (dead)
+
+        * Quake3Arena:
+           - protocols: 66, 67, 68
+           - options: none
+           - heartbeats: QuakeArena-1 (alive)
+
+"et", "wolfmp" and "Quake3Arena" are the respective game names for WoET, RtCW
+and Q3A. Each of them have been assigned several protocol numbers, options, and
+up to 2 heartbeat tags (one for alive servers, one for dying servers). All these
+values are optional: a game name can have no protocol, no option and no tag
+associated to it, although there would be no point to that.
+
+Normal (alive) heartbeat tags are used to figure out the game name when servers
+don't send it, like those of Q3A and some old Wolfenstein versions. Dead
+heartbeat tags are simply ignored, they don't trigger the sending of a "getinfo"
+message, unlike normal heartbeats.
+
+Protocol numbers are used to figure out the game name when clients don't send it
+with their "getservers" requests, and unfortunately this is the case for all the
+anonymous games currently supported. If the protocol declared by the client
+doesn't match any of the registered protocol numbers, dpmaster will search its
+server list for an anonymous game that uses the same protocol number. It will
+then use this server's game name as the request's game name.
+
+Options allows you to specify non-standard behaviours for a game. For example,
+the WoET's clients expect the master server to send them the complete list of
+servers, even though they don't specify that they want empty and full servers,
+like other Q3A-derived games do. By associating the proper options to its game
+name ("et"), we make sure that dpmaster will send the expected list anyway.
+The available options are: "send-empty-servers" and "send-full-servers".
+
+In order to modify the properties of a game, you have to use the command line
+option, with the game name as the first parameter, and then the modifications
+you want. You can either assign new values to a property (using "="), add values
+to it (using "+="), or remove values from it (using "-="). The values in the
+list must be separated by commas. No spaces are allowed, neither in the game
+name, nor in the list of modifications. The available properties are:
+"protocols", "options", "heartbeat" (normal heartbeat), and "flatline" (dying
+heartbeat).
+
+And you can have multiple game property changes in your command line, obviously.
+Here are a few examples.
+
+To add protocol 70 and a dead heartbeat to Q3A:
+
+        dpmaster -g Quake3Arena protocols+=70 flatline=Q3ADeadHB
+
+To remove all protocols from RtCW and give it 2 brand new ones, 4321 and 1234:
+
+        dpmaster -g wolfmp protocols=4321,1234
+
+To not send full servers to WoET clients, and to remove protocol 50 from RtCW:
+
+        dpmaster -g et options-=send-full-servers -g wolfmp protocols-=50
+
+The game properties has been added to dpmaster in order to support anonymous
+games, but it can also be useful for other games. For instance, you can force
+dpmaster to send empty servers to Warsow clients like this:
+
+        dpmaster -g Warsow options=send-empty-servers
+
+You could also specify a list of protocol numbers here, but since Warsow uses
+the DarkPlaces master protocol, both its clients and servers declares their game
+names, so it would be useless.
+
+Note that you can ask for the list of properties after you have declared some
+modifications, using a final "-g" on the command line. In this case, the printed
+list will contain your modifications. It's a good way to check that you didn't
+make any mistake before actually running your master server.
+
+
+7) FLOOD PROTECTION:
+
+If the master server you run has to handle a lot of clients, you will probably
+be interested in the flood protection mechanism Timothee Besset contributed to
+dpmaster version 2.2.
+
+Its purpose is to protect the master server bandwidth, by temporary ignoring the
+requests of clients which have already made several ones in the few seconds
+before. More precisely, a client can only make a limited number of requests (up
+to a "throttle limit") before it is ignored. The request counter associated to
+the client decreases over time though, by 1 every X seconds (X is called the
+"decay time").
+
+So for example, with a throttle limit of 5 and a decay time of 3 seconds, if a
+client does 5 requests in a row, its 4 first requests will be answered, the 5th
+one will be ignored. It will then have to wait 3 seconds for its counter to
+decrease so that one of its requests can be answered again.
+
+This protection is disabled by default because, by definition, it can disturb
+the service provided to the master's users, and given most master servers don't
+have to deal with this type of flood problem, it would be for no real benefits.
+You can enable the protection by passing the option "-f" or "--flood-protection"
+in the command line. The throttle limit and decay time can be modified with
+"--fp-throttle" and "--fp-decay-time" respectively.
+
+You also have the possibility to tune the maximum number of client records and
+the client hash size with "--max-clients" and "--cl-hash-size". But since client
+records are reused extremely rapidly in this mechanism, chances are the default
+values will be way bigger than your actual needs anyway.
+
+
+8) ADDRESS MAPPING:
+
+Address mapping allows you to tell dpmaster to transmit an IPv4 address instead
+of another one to the clients, in the "getserversResponse" messages. It can be
+useful in several cases. Imagine for instance that you have a dpmaster and a
+server behind a firewall, with local IPv4 addresses. You don't want the master
+to send the local server IP address. Instead, you probably want it to send the
+firewall address.
+
+Address mappings are currently only available for IPv4 addresses. It appears
+IPv6 doesn't need such a mechanism, since NATs have been deprecated in this new
+version of the protocol. However, feel free to contact me if you actually need
+IPv6 address mappings for some reason.
+
+Address mappings are declared on the command line, using the "-m" or "--map"
+option. You can declare as many of them as you want. The syntax is:
+
+        dpmaster -m address1=address2 -m address3=address4 ...
+
+An address can be an explicit IPv4 address, such as "192.168.1.1", or an host
+name, "www.mydomain.net" for instance. Optionally, a port number can be
+appended after a ':' (ex: "www.mydomain.net:1234").
+
+The most simple mappings are host-to-host mappings. For example:
+
+        dpmaster -m 1.2.3.4=myaddress.net
+
+In this case, each time dpmaster would have transmitted "1.2.3.4" to a client,
+it will transmit the "myaddress.net" IP address instead.
+
+If you add a port number to the first address, then the switching will only
+occur if the server matches the address and the port number.
+If you add a port number to the second address, then dpmaster will not only
+change the IP address, it will also change the port number.
+
+So there are 4 types of mappings:
+    - host1 -> host2 mappings:
+        They're simple, we just saw them.
+
+    - host1:port1 -> host2:port2 mappings:
+        If the server matches exactly the 1st address, it will be transmitted
+        as the 2nd address.
+
+    - host1:port1 -> host2 mappings:
+        If the server matches exactly the 1st address, its IP address will be
+        transmitted as the "host2" IP address. The port number won't change.
+        It's equivalent to "host1:port1=host2:port1".
+
+    - host1 -> host2:port2 mappings
+        If the server is hosted on host1, its address will be transmitted as
+        "host2:port2".
+
+Finally, be aware that you can't declare an address mapping from or to
+"0.0.0.0", neither can you declare an address mapping to a loopback address
+(i.e. 127.x.y.z:p). Mapping from a loopback address is permitted though, and
+it's actually one of the 2 only ways to make dpmaster accept a server talking
+from a loopback address (the other way being a command line option used for
+test purposes - do NOT run your master with this option!).
+
+
+9) LISTENING INTERFACES:
+
+By default, dpmaster creates one IPv4 socket and one IPv6 socket (if IPv6
+support is available of course). It will listen on every network interface, on
+the default port unless you specified another one using "-p" or "--port". If
+you want it to listen on one or more particular interface(s) instead, you will
+have to use the command line option "-l" or "--listen".
+
+Running dpmaster with no "-l" option is (almost) like running it with:
+
+        dpmaster --listen 0.0.0.0 --listen ::
+
+The first option is for listening on all IPv4 interfaces, the second for
+listening on all IPv6 interfaces, both on the default port. The only
+difference between this command line and one without any "--listen" option is
+that dpmaster will abort in the former if IPv4 or IPv6 isn't supported by your
+system, as you have explicitly requested those network sockets to be opened.
+Note that if you don't want dpmaster to listen on IPv6 interfaces, you can
+easily do it by only specifying "-l 0.0.0.0" on the command line.
+
+As usual, you can specify a port number along with an address, by appending
+":" and then the port. In this case, numeric IPv6 addresses need to be put
+between brackets first, so that dpmaster won't get confused when interpreting
+the various colons. For example:
+
+        dpmaster -l an.address.net:546 -l [2000::1234:5678]:890
+
+will make dpmaster listen on the IPv6 interface 2000::1234:5678 on port 890,
+and on the IPv4 or IPv6 interface "an.address.net" (depending on what protocol
+the resolution of this name gives) on port 546.
+
+IPv6 addressing has a few tricky aspects, and zone indices are one of them. If
+you encounter problems when configuring dpmaster for listening on a link-local
+IPv6 address, I recommend that you read the paragraph called "Link-local
+addresses and zone indices" on this Wikipedia page:
+
+        http://en.wikipedia.org/wiki/IPv6_address
+
+
+--
+Mathieu Olivier
+molivier, at users.sourceforge.net
